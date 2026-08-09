@@ -83,6 +83,7 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
         val root: View = binding.root
 
         webView = binding.webview
+        webView.setBackgroundColor(android.graphics.Color.TRANSPARENT)
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
         webView.settings.cacheMode = WebSettings.LOAD_CACHE_ELSE_NETWORK
@@ -118,7 +119,7 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
         })
 
         switchToInternetMode()
-        webView.loadData("<html><body></body></html>", "text/html", "UTF-8")
+        webView.loadData("<html><body style='background:transparent;'></body></html>", "text/html", "UTF-8")
 
         fun loadUrlFromInput() {
             val input = binding.urlInput.text.toString().trim()
@@ -418,6 +419,10 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
         updateMenuVisibility()
         
         webView.webViewClient = LocalFileWebViewClient(requireContext().cacheDir) { url ->
+            if (url.startsWith("https://text-only.local/")) {
+                // Do not update the URL bar when in Text Only Mode
+                return@LocalFileWebViewClient
+            }
             if (url.startsWith("data:text/html")) {
                 binding.urlInput.setText("")
             } else if (url.startsWith(LocalFileWebViewClient.LOCAL_SCHEME)) {
@@ -479,7 +484,7 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
         when (item.itemId) {
             R.id.nav_home -> {
                 switchToInternetMode()
-                webView.loadData("<html><body></body></html>", "text/html", "UTF-8")
+                webView.loadData("<html><body style='background:transparent;'></body></html>", "text/html", "UTF-8")
                 binding.urlInput.setText("")
             }
             R.id.nav_open_zim -> {
@@ -507,38 +512,44 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
                 }
             }
             R.id.nav_text_only_mode -> {
-                lifecycleScope.launch(Dispatchers.Main) {
-                    val html = captureCurrentHtml()
-                    if (html != null) {
-                        val cleanedHtml = withContext(Dispatchers.IO) {
-                            val articleTitle = binding.urlInput.text.toString().ifBlank { "Article" }
-                            val body = TextOnlyCleaner.clean(html)
-                            """
-                            <!DOCTYPE html>
-                            <html>
-                            <head>
-                                <meta charset="UTF-8">
-                                <title>$articleTitle</title>
-                                <style>
-                                    body { font-family: sans-serif; line-height: 1.6; padding: 20px; max-width: 800px; margin: 0 auto; background: #fdfdfd; color: #333; }
-                                    h1 { color: #111; border-bottom: 2px solid #eee; padding-bottom: 10px; }
-                                    img, video, iframe, nav, footer, sidebar { display: none !important; }
-                                    pre { background: #f4f4f4; padding: 10px; overflow-x: auto; }
-                                    code { font-family: monospace; background: #f4f4f4; padding: 2px 4px; }
-                                </style>
-                            </head>
-                            <body>
-                                <h1>$articleTitle</h1>
-                                $body
-                            </body>
-                            </html>
-                            """.trimIndent()
+                val currentUrl = webView.url ?: ""
+                val currentInput = binding.urlInput.text.toString()
+                if (currentUrl.startsWith("https://text-only.local/") || currentInput.startsWith(getString(R.string.text_mode_prefix).substringBefore("%s"))) {
+                    // Already in text only mode, don't re-apply recursively
+                } else {
+                    lifecycleScope.launch(Dispatchers.Main) {
+                        val originalTitle = currentInput
+                        val html = captureCurrentHtml()
+                        if (html != null) {
+                            val cleanedHtml = withContext(Dispatchers.IO) {
+                                val articleTitle = originalTitle.ifBlank { "Article" }
+                                val body = TextOnlyCleaner.clean(html)
+                                """
+                                <!DOCTYPE html>
+                                <html>
+                                <head>
+                                    <meta charset="UTF-8">
+                                    <title>$articleTitle</title>
+                                    <style>
+                                        body { font-family: sans-serif; line-height: 1.6; padding: 20px; max-width: 800px; margin: 0 auto; background: #fdfdfd; color: #333; }
+                                        h1 { color: #111; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+                                        img, video, iframe, nav, footer, sidebar { display: none !important; }
+                                        pre { background: #f4f4f4; padding: 10px; overflow-x: auto; }
+                                        code { font-family: monospace; background: #f4f4f4; padding: 2px 4px; }
+                                    </style>
+                                </head>
+                                <body>
+                                    <h1>$articleTitle</h1>
+                                    $body
+                                </body>
+                                </html>
+                                """.trimIndent()
+                            }
+                            webView.loadDataWithBaseURL("https://text-only.local/", cleanedHtml, "text/html", "UTF-8", null)
+                            binding.urlInput.setText(getString(R.string.text_mode_prefix, originalTitle))
+                        } else {
+                            Toast.makeText(requireContext(), "Failed to capture content for Text Only Mode", Toast.LENGTH_SHORT).show()
                         }
-                        webView.loadDataWithBaseURL("https://text-only.local/", cleanedHtml, "text/html", "UTF-8", null)
-                        val originalTitle = binding.urlInput.text.toString()
-                        binding.urlInput.setText(getString(R.string.text_mode_prefix, originalTitle))
-                    } else {
-                        Toast.makeText(requireContext(), "Failed to capture content for Text Only Mode", Toast.LENGTH_SHORT).show()
                     }
                 }
             }
