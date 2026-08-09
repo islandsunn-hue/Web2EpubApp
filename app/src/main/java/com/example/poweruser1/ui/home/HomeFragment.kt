@@ -73,7 +73,7 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
     }
 
     private val saveHtmlLauncher = registerForActivityResult(ActivityResultContracts.CreateDocument("text/html")) { uri ->
-        uri?.let { exportHtmlToUri(it) }
+        uri?.let { exportHtmlToUri(it) } ?: run { capturedHtmlForExport = null }
     }
 
     private val saveMhtmlLauncher = registerForActivityResult(ActivityResultContracts.CreateDocument("application/x-webarchive")) { uri ->
@@ -81,8 +81,10 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
     }
 
     private val saveEpubLauncher = registerForActivityResult(ActivityResultContracts.CreateDocument("application/epub+zip")) { uri ->
-        uri?.let { exportEpubToUri(it) }
+        uri?.let { exportEpubToUri(it) } ?: run { capturedHtmlForExport = null }
     }
+
+    private var capturedHtmlForExport: String? = null
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -591,9 +593,14 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
             R.id.nav_save_html -> {
                 lifecycleScope.launch(Dispatchers.Main) {
                     val html = captureCurrentHtml()
-                    val title = if (html != null) TextOnlyCleaner.getTitle(html) else "article"
-                    val cleanFileName = title.replace(Regex("[^a-zA-Z0-9.-]"), "_").take(30)
-                    saveHtmlLauncher.launch("$cleanFileName.html")
+                    if (html != null) {
+                        capturedHtmlForExport = html
+                        val title = TextOnlyCleaner.getTitle(html)
+                        val cleanFileName = title.replace(Regex("[^a-zA-Z0-9.-]"), "_").take(30)
+                        saveHtmlLauncher.launch("$cleanFileName.html")
+                    } else {
+                        Toast.makeText(requireContext(), "Failed to capture content", Toast.LENGTH_SHORT).show()
+                    }
                 }
             }
             R.id.nav_save_mhtml -> {
@@ -605,9 +612,14 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
             R.id.nav_save_epub -> {
                 lifecycleScope.launch(Dispatchers.Main) {
                     val html = captureCurrentHtml()
-                    val title = if (html != null) TextOnlyCleaner.getTitle(html) else ""
-                    val cleanFileName = title.replace(Regex("[^a-zA-Z0-9.-]"), "_").take(30)
-                    saveEpubLauncher.launch("$cleanFileName.epub")
+                    if (html != null) {
+                        capturedHtmlForExport = html
+                        val title = TextOnlyCleaner.getTitle(html)
+                        val cleanFileName = title.replace(Regex("[^a-zA-Z0-9.-]"), "_").take(30)
+                        saveEpubLauncher.launch("$cleanFileName.epub")
+                    } else {
+                        Toast.makeText(requireContext(), "Failed to capture content", Toast.LENGTH_SHORT).show()
+                    }
                 }
             }
         }
@@ -648,26 +660,25 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
     }
 
     private fun exportHtmlToUri(uri: Uri) {
-        lifecycleScope.launch(Dispatchers.Main) {
-            val html = captureCurrentHtml()
-            if (html != null) {
-                withContext(Dispatchers.IO) {
-                    try {
-                        requireContext().contentResolver.openOutputStream(uri)?.use { output ->
-                            output.write(html.toByteArray())
-                        }
-                        withContext(Dispatchers.Main) {
-                            Toast.makeText(requireContext(), "HTML exported successfully", Toast.LENGTH_SHORT).show()
-                        }
-                    } catch (e: Exception) {
-                        withContext(Dispatchers.Main) {
-                            Toast.makeText(requireContext(), "Failed to save HTML: ${e.message}", Toast.LENGTH_LONG).show()
-                        }
+        val html = capturedHtmlForExport
+        capturedHtmlForExport = null
+        if (html != null) {
+            lifecycleScope.launch(Dispatchers.IO) {
+                try {
+                    requireContext().contentResolver.openOutputStream(uri)?.use { output ->
+                        output.write(html.toByteArray())
+                    }
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(requireContext(), "HTML exported successfully", Toast.LENGTH_SHORT).show()
+                    }
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(requireContext(), "Failed to save HTML: ${e.message}", Toast.LENGTH_LONG).show()
                     }
                 }
-            } else {
-                Toast.makeText(requireContext(), "Failed to capture HTML content", Toast.LENGTH_SHORT).show()
             }
+        } else {
+            Toast.makeText(requireContext(), "No content to save", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -719,13 +730,14 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
     }
 
     private fun exportEpubToUri(uri: Uri) {
-        lifecycleScope.launch(Dispatchers.Main) {
-            val html = captureCurrentHtml()
-            if (html != null) {
+        val html = capturedHtmlForExport
+        capturedHtmlForExport = null
+        if (html != null) {
+            lifecycleScope.launch(Dispatchers.Main) {
                 generateEpub(uri, html)
-            } else {
-                Toast.makeText(requireContext(), "Failed to capture content for ePub", Toast.LENGTH_SHORT).show()
             }
+        } else {
+            Toast.makeText(requireContext(), "No content to save", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -748,18 +760,25 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
 
         // 2. Try JS first (Fastest and usually accurate for rendered DOM)
         val jsHtml = captureViaJs()
-        if (jsHtml != null && jsHtml.length > 500) {
+        val isInternalTextOnly = currentUrl.startsWith("https://text-only.local/")
+        val jsThreshold = if (isInternalTextOnly) 10 else 500
+        
+        if (jsHtml != null && jsHtml.length >= jsThreshold) {
             Log.d(TAG, "Captured via JS, length=${jsHtml.length}")
             return@withContext jsHtml
         }
 
         // 3. Try saveWebArchive (Robust fallback for tricky/MHTML-based pages)
-        val mhtml = captureViaWebArchive()
-        if (mhtml != null) {
-            val extracted = extractHtmlFromMhtml(mhtml)
-            if (extracted.length > 500) {
-                Log.d(TAG, "Captured via saveWebArchive, length=${extracted.length}")
-                return@withContext extracted
+        // Skip web archive if we are in internal text-only mode as it's unreliable for data loads
+        var mhtmlResult: String? = null
+        if (!isInternalTextOnly) {
+            mhtmlResult = captureViaWebArchive()
+            if (mhtmlResult != null) {
+                val extracted = extractHtmlFromMhtml(mhtmlResult)
+                if (extracted.length > 500) {
+                    Log.d(TAG, "Captured via saveWebArchive, length=${extracted.length}")
+                    return@withContext extracted
+                }
             }
         }
 
@@ -773,7 +792,7 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
         }
 
         Log.e(TAG, "All capture methods failed for $currentUrl")
-        return@withContext jsHtml ?: mhtml?.let { extractHtmlFromMhtml(it) }
+        return@withContext jsHtml ?: mhtmlResult?.let { extractHtmlFromMhtml(it) }
     }
 
     private suspend fun captureViaJs(): String? = try {
