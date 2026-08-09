@@ -31,7 +31,6 @@ import kotlinx.coroutines.withContext
 import org.kiwix.libzim.Entry
 import java.io.File
 import java.io.FileOutputStream
-import java.net.URLDecoder
 import java.net.URLEncoder
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -89,9 +88,9 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
         webView.settings.cacheMode = WebSettings.LOAD_CACHE_ELSE_NETWORK
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
         
-        webView.settings.allowFileAccessFromFileURLs = true
-        webView.settings.allowUniversalAccessFromFileURLs = true
-        webView.settings.allowFileAccess = true
+        webView.settings.allowFileAccessFromFileURLs = false
+        webView.settings.allowUniversalAccessFromFileURLs = false
+        webView.settings.allowFileAccess = false
 
         binding.toolbar.inflateMenu(R.menu.browser_toolbar_menu)
         binding.toolbar.setOnMenuItemClickListener {
@@ -191,7 +190,8 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val fileName = getFileNameFromUri(uri)
-                val tempFile = File(requireContext().cacheDir, "open_$fileName")
+                val sanitizedName = sanitizeFileName(fileName)
+                val tempFile = File(requireContext().cacheDir, "open_$sanitizedName")
                 requireContext().contentResolver.openInputStream(uri)?.use { input ->
                     FileOutputStream(tempFile).use { output ->
                         input.copyTo(output)
@@ -200,10 +200,10 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
 
                 withContext(Dispatchers.Main) {
                     switchToInternetMode()
-                    val fileUrl = "file://${tempFile.absolutePath}"
+                    val fileUrl = "${LocalFileWebViewClient.LOCAL_SCHEME}open_$sanitizedName"
                     webView.loadUrl(fileUrl)
-                    binding.urlInput.setText(fileName)
-                    Toast.makeText(requireContext(), "Opened local file: $fileName", Toast.LENGTH_SHORT).show()
+                    binding.urlInput.setText(sanitizedName)
+                    Toast.makeText(requireContext(), "Opened local file: $sanitizedName", Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
@@ -211,6 +211,10 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
                 }
             }
         }
+    }
+
+    private fun sanitizeFileName(name: String): String {
+        return name.replace(Regex("[^a-zA-Z0-9.-]"), "_")
     }
 
     private fun openZimFromUri(uri: Uri) {
@@ -299,7 +303,8 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
     private suspend fun copyUriToCache(uri: Uri): File? = withContext(Dispatchers.IO) {
         val context = requireContext()
         val fileName = getFileNameFromUri(uri)
-        val cacheFile = File(context.cacheDir, "local_$fileName")
+        val sanitizedName = sanitizeFileName(fileName)
+        val cacheFile = File(context.cacheDir, "local_$sanitizedName")
         
         try {
             context.contentResolver.openInputStream(uri)?.use { input ->
@@ -412,14 +417,13 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
         binding.urlInput.hint = "Enter URL or Search"
         updateMenuVisibility()
         
-        webView.webViewClient = object : WebViewClient() {
-            override fun onPageFinished(view: WebView?, url: String?) {
-                super.onPageFinished(view, url)
-                if (url != null && url.startsWith("data:text/html")) {
-                    binding.urlInput.setText("")
-                } else {
-                    binding.urlInput.setText(url)
-                }
+        webView.webViewClient = LocalFileWebViewClient(requireContext().cacheDir) { url ->
+            if (url.startsWith("data:text/html")) {
+                binding.urlInput.setText("")
+            } else if (url.startsWith(LocalFileWebViewClient.LOCAL_SCHEME)) {
+                binding.urlInput.setText(url.removePrefix(LocalFileWebViewClient.LOCAL_SCHEME))
+            } else {
+                binding.urlInput.setText(url)
             }
         }
     }
@@ -621,11 +625,10 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
 
     private fun exportMhtmlToUri(uri: Uri) {
         val currentUrl = webView.url
-        if (currentUrl != null && currentUrl.startsWith("file://")) {
-            val encodedPath = currentUrl.substring(7)
-            val decodedPath = try { URLDecoder.decode(encodedPath, "UTF-8") } catch (_: Exception) { encodedPath }
-            val file = File(decodedPath)
-            if (file.exists() && (decodedPath.endsWith(".mht", ignoreCase = true) || decodedPath.endsWith(".mhtml", ignoreCase = true))) {
+        if (currentUrl != null && currentUrl.startsWith(LocalFileWebViewClient.LOCAL_SCHEME)) {
+            val fileName = currentUrl.removePrefix(LocalFileWebViewClient.LOCAL_SCHEME)
+            val file = File(requireContext().cacheDir, fileName)
+            if (file.exists() && (fileName.endsWith(".mht", ignoreCase = true) || fileName.endsWith(".mhtml", ignoreCase = true))) {
                 lifecycleScope.launch(Dispatchers.IO) {
                     try {
                         requireContext().contentResolver.openOutputStream(uri)?.use { output ->
@@ -696,17 +699,15 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
             }
         }
 
-        if (currentUrl != null && currentUrl.startsWith("file://")) {
-            val encodedPath = currentUrl.substring(7)
+        if (currentUrl != null && currentUrl.startsWith(LocalFileWebViewClient.LOCAL_SCHEME)) {
+            val fileName = currentUrl.removePrefix(LocalFileWebViewClient.LOCAL_SCHEME)
             
             return@withContext withContext(Dispatchers.IO) {
-                val decodedPath = try { URLDecoder.decode(encodedPath, "UTF-8") } catch (_: Exception) { encodedPath }
-                
                 try {
-                    val file = File(decodedPath)
+                    val file = File(requireContext().cacheDir, fileName)
                     if (file.exists() && file.canRead()) {
                         val content = file.readText(Charsets.UTF_8)
-                        if (decodedPath.endsWith(".mht", ignoreCase = true) || decodedPath.endsWith(".mhtml", ignoreCase = true)) {
+                        if (fileName.endsWith(".mht", ignoreCase = true) || fileName.endsWith(".mhtml", ignoreCase = true)) {
                             extractHtmlFromMhtml(content)
                         } else {
                             content
