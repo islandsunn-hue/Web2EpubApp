@@ -8,7 +8,8 @@ object TextOnlyCleaner {
     private val REMOVE_TAGS = listOf(
         "script", "style", "link", "img", "video", "audio", "iframe",
         "embed", "object", "svg", "canvas", "input", "button", "select",
-        "textarea", "form", "dialog",
+        "textarea", "form", "dialog", "noscript", "template", "picture",
+        "source", "track", "metadata", "applet", "base", "embed"
     )
 
     private val REMOVE_STRUCTURAL_TAGS = listOf(
@@ -61,6 +62,9 @@ object TextOnlyCleaner {
         }
 
         doc.select("ins.adsbygoogle, div[id^='google_ads'], div[id^='div-gpt-ad']").remove()
+        
+        // Remove obviously hidden elements
+        doc.select("[hidden], [aria-hidden='true'], [style*='display:none'], [style*='display: none'], [style*='visibility:hidden']").remove()
 
         val allElements = doc.allElements
         val elementsToRemove = mutableListOf<Element>()
@@ -81,6 +85,19 @@ object TextOnlyCleaner {
 
         for (el in elementsToRemove) {
             el.remove()
+        }
+
+        // Final scrub: Remove ALL attributes from ALL elements except 'href'.
+        // This is critical for preventing data attributes (which often contain raw HTML/JSON strings)
+        // from leaking into the visible text or bloating the exported EPUB/HTML.
+        for (element in doc.allElements) {
+            val attributes = element.attributes().toList()
+            for (attr in attributes) {
+                val key = attr.key.lowercase()
+                if (key != "href" && key != "title") {
+                    element.removeAttr(attr.key)
+                }
+            }
         }
 
         val body = doc.body()
