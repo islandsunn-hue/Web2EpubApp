@@ -9,6 +9,8 @@ import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
+import android.view.inputmethod.EditorInfo
+import android.view.KeyEvent
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -183,6 +185,16 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
                 }
             } else {
                 loadUrlFromInput()
+            }
+        }
+
+        binding.urlInput.setOnEditorActionListener { _, actionId, event ->
+            if (actionId == EditorInfo.IME_ACTION_GO || actionId == EditorInfo.IME_ACTION_SEARCH ||
+                (event != null && event.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN)) {
+                binding.goButton.performClick()
+                true
+            } else {
+                false
             }
         }
 
