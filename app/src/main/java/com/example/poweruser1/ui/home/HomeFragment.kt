@@ -210,8 +210,8 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             if (!Environment.isExternalStorageManager()) {
                 AlertDialog.Builder(requireContext())
-                    .setTitle("Performance Warning")
-                    .setMessage("Direct path access (mmap) is required for high-performance loading of large files. Please grant 'All Files Access' to enable this.")
+                    .setTitle("Files Access")
+                    .setMessage("Please grant 'All Files Access' to enable file loading.")
                     .setPositiveButton("Grant") { _, _ ->
                         val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
                         intent.data = Uri.parse("package:${requireContext().packageName}")
@@ -233,7 +233,7 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
     private fun handlePickedUri(uri: Uri, type: String) {
         val path = tryGetPathFromUri(uri)
         Log.d(TAG, "handlePickedUri: type=$type, uri=$uri, resolvedPath=$path")
-        if (path != null) {
+        if (path != null && File(path).canRead()) {
             val file = File(path)
             if (type == "ZIM") {
                 openZimByFile(file)
@@ -241,20 +241,29 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
                 openLocalFileByPath(file)
             }
         } else {
-            Log.e(TAG, "Failed to resolve path for URI: $uri")
-            AlertDialog.Builder(requireContext())
-                .setTitle("Cannot Open Direct Path")
-                .setMessage("This file source does not provide a physical path. Large files cannot be opened this way without copying.\n\nSolution: Use the sidebar in the picker to select 'Internal Storage' or 'SD Card' directly.")
-                .setPositiveButton("Retry", { _, _ -> requestOpenFile(type) })
-                .setNegativeButton("Cancel", null)
-                .show()
+            // Fallback for restricted paths: Use URI/FD directly
+            if (type == "ZIM") {
+                openZimByUri(uri)
+            } else {
+                openLocalFileByUri(uri)
+            }
         }
+    }
+
+    private fun openLocalFileByUri(uri: Uri) {
+        switchToInternetMode()
+        webView.loadUrl(uri.toString())
+        
+        // Restore standard look
+        binding.urlInput.setText("")
+        binding.urlInput.hint = "Enter URL or Search"
+        
+        Toast.makeText(requireContext(), "Opened", Toast.LENGTH_SHORT).show()
     }
 
     private fun openLocalFileByPath(file: File) {
         if (!file.exists() || !file.canRead()) {
-            Log.e(TAG, "Local file not accessible: ${file.absolutePath}")
-            Toast.makeText(requireContext(), "Cannot read file: ${file.absolutePath}", Toast.LENGTH_LONG).show()
+            openLocalFileByUri(Uri.fromFile(file))
             return
         }
 
@@ -269,19 +278,49 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
         Log.d(TAG, "Loading local file via file:// URL: $fileUrl")
         webView.loadUrl(fileUrl)
         
-        // Ensure search bar is empty
+        // Ensure search bar is empty and hint is restored to default
         binding.urlInput.setText("")
+        binding.urlInput.hint = "Enter URL or Search"
         
         Toast.makeText(requireContext(), "Opened: ${file.name}", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun openZimByUri(uri: Uri) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val pfd = requireContext().contentResolver.openFileDescriptor(uri, "r")
+                if (pfd == null) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(requireContext(), "Failed to open system file handle.", Toast.LENGTH_LONG).show()
+                    }
+                    return@launch
+                }
+
+                withContext(Dispatchers.Main) {
+                    binding.loadingProgress.visibility = View.VISIBLE
+                }
+
+                val wrapper = KiwixZimWrapper(pfd)
+                withContext(Dispatchers.Main) {
+                    finalizeZimOpening(wrapper)
+                    Toast.makeText(requireContext(), "Opened ZIM", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error opening ZIM via URI", e)
+                withContext(Dispatchers.Main) {
+                    binding.loadingProgress.visibility = View.GONE
+                    Toast.makeText(requireContext(), "Error opening ZIM: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
     }
 
     private fun openZimByFile(file: File) {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 if (!file.exists() || !file.canRead()) {
-                    Log.e(TAG, "ZIM file not accessible: ${file.absolutePath}")
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(requireContext(), "Cannot read file handle: ${file.absolutePath}", Toast.LENGTH_LONG).show()
+                        openZimByUri(Uri.fromFile(file))
                     }
                     return@launch
                 }
@@ -293,6 +332,7 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
                 val wrapper = KiwixZimWrapper(file)
                 withContext(Dispatchers.Main) {
                     finalizeZimOpening(wrapper)
+                    Toast.makeText(requireContext(), "Opened ZIM (Direct Path)", Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error opening ZIM file", e)
@@ -313,7 +353,6 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
         if (mainEntry != null) {
             loadZimArticle(mainEntry)
         }
-        Toast.makeText(requireContext(), "Opened ZIM: ${wrapper.articleCount} entries", Toast.LENGTH_SHORT).show()
     }
 
     private fun tryGetPathFromUri(uri: Uri): String? {
@@ -323,7 +362,6 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
         try {
             context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
                 val path = Os.readlink("/proc/self/fd/${pfd.fd}")
-                Log.d(TAG, "Os.readlink path: $path")
                 if (path != null && (path.startsWith("/storage") || path.startsWith("/data") || path.startsWith("/mnt"))) {
                     return path
                 }
@@ -417,8 +455,8 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
             }
             if (url.startsWith("data:text/html")) {
                 binding.urlInput.setText("")
-            } else if (url.startsWith("file:///")) {
-                // Ensure bar is empty for local files and restore default hint
+            } else if (url.startsWith("file:///") || url.startsWith("content://")) {
+                // Ensure bar is empty and hint is restored for local files
                 binding.urlInput.setText("")
                 binding.urlInput.hint = "Enter URL or Search"
             } else {
