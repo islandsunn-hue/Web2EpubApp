@@ -5,10 +5,10 @@
         android:title="Home" />
     <item
         android:id="@+id/nav_open_zim"
-        android:title="Open Local ZIM File" />
+        android:title="Open ZIM File" />
     <item
         android:id="@+id/nav_open_local"
-        android:title="Open Local HTML/MHTML" />
+        android:title="Open HTML/MHTML" />
     <item
         android:id="@+id/nav_zim_search"
         android:title="ZIM Index" />

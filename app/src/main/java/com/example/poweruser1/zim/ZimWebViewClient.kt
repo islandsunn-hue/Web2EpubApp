@@ -90,7 +90,14 @@ class ZimWebViewClient(
                     val rawMimeType = item.mimetype ?: ""
                     val mimeType = getMimeType(rawMimeType, rawPath)
                     val encoding = getEncodingForMimeType(mimeType)
-                    return WebResourceResponse(mimeType, encoding, ByteArrayInputStream(data))
+                    
+                    val response = WebResourceResponse(mimeType, encoding, ByteArrayInputStream(data))
+                    // Add caching headers to speed up subsequent loads of the same resources
+                    response.responseHeaders = mapOf(
+                        "Cache-Control" to "max-age=86400", // 1 day
+                        "Access-Control-Allow-Origin" to "*"
+                    )
+                    return response
                 }
             } catch (_: Exception) {}
         }

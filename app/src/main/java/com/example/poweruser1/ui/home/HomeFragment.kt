@@ -3,7 +3,7 @@ package com.example.poweruser1.ui.home
 import android.content.Context
 import android.net.Uri
 import android.os.Bundle
-import android.provider.OpenableColumns
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.MenuItem
 import android.view.View
@@ -30,15 +30,25 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import org.kiwix.libzim.Entry
 import java.io.File
-import java.io.FileOutputStream
 import java.net.URLEncoder
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import android.print.PrintAttributes
 import android.print.PrintManager
+import android.os.Environment
+import android.content.Intent
+import android.os.Build
+import android.provider.Settings
+import android.provider.DocumentsContract
+import android.content.ContentUris
+import android.system.Os
 import kotlin.coroutines.resume
 
 class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener {
+
+    companion object {
+        private const val TAG = "HomeFragment"
+    }
 
     private var _binding: FragmentHomeBinding? = null
     private val binding get() = _binding!!
@@ -49,17 +59,17 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
     private var lastModeInDrawer: Boolean? = null
 
     private val openZimLauncher = registerForActivityResult(
-        ActivityResultContracts.GetContent()
+        ActivityResultContracts.OpenDocument()
     ) { uri ->
-        if (uri != null) {
-            openZimFromUri(uri)
-        }
+        Log.d(TAG, "ZIM Picker result: $uri")
+        uri?.let { handlePickedUri(it, "ZIM") }
     }
 
     private val openLocalFileLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
-        uri?.let { openLocalFileFromUri(it) }
+        Log.d(TAG, "Local File Picker result: $uri")
+        uri?.let { handlePickedUri(it, "HTML") }
     }
 
     private val saveHtmlLauncher = registerForActivityResult(ActivityResultContracts.CreateDocument("text/html")) { uri ->
@@ -84,14 +94,23 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
 
         webView = binding.webview
         webView.setBackgroundColor(android.graphics.Color.TRANSPARENT)
-        webView.settings.javaScriptEnabled = true
-        webView.settings.domStorageEnabled = true
-        webView.settings.cacheMode = WebSettings.LOAD_CACHE_ELSE_NETWORK
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
         
-        webView.settings.allowFileAccessFromFileURLs = false
-        webView.settings.allowUniversalAccessFromFileURLs = false
-        webView.settings.allowFileAccess = false
+        val settings = webView.settings
+        settings.javaScriptEnabled = true
+        settings.domStorageEnabled = true
+        settings.cacheMode = WebSettings.LOAD_CACHE_ELSE_NETWORK
+        
+        settings.allowFileAccess = true
+        settings.allowContentAccess = true
+        settings.allowFileAccessFromFileURLs = true
+        settings.allowUniversalAccessFromFileURLs = true
+        settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+        
+        settings.loadWithOverviewMode = true
+        settings.useWideViewPort = true
+        settings.builtInZoomControls = true
+        settings.displayZoomControls = false
 
         binding.toolbar.inflateMenu(R.menu.browser_toolbar_menu)
         binding.toolbar.setOnMenuItemClickListener {
@@ -145,8 +164,8 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
                 val input = binding.urlInput.text.toString().trim()
                 val wrapper = currentZimWrapper
                 if (wrapper == null) {
-                    Toast.makeText(requireContext(), "No ZIM file open. Please open a ZIM file first.", Toast.LENGTH_SHORT).show()
-                    openZimLauncher.launch("*/*")
+                    Toast.makeText(requireContext(), "No ZIM file open.", Toast.LENGTH_SHORT).show()
+                    requestOpenFile("ZIM")
                 } else if (input.isNotBlank()) {
                     val directEntry = wrapper.getEntryForPath(input)
                     if (directEntry != null) {
@@ -187,189 +206,163 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
         requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, callback)
     }
 
-    private fun openLocalFileFromUri(uri: Uri) {
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val fileName = getFileNameFromUri(uri)
-                val sanitizedName = sanitizeFileName(fileName)
-                val tempFile = File(requireContext().cacheDir, "open_$sanitizedName")
-                requireContext().contentResolver.openInputStream(uri)?.use { input ->
-                    FileOutputStream(tempFile).use { output ->
-                        input.copyTo(output)
+    private fun requestOpenFile(type: String) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (!Environment.isExternalStorageManager()) {
+                AlertDialog.Builder(requireContext())
+                    .setTitle("Performance Warning")
+                    .setMessage("Direct path access (mmap) is required for high-performance loading of large files. Please grant 'All Files Access' to enable this.")
+                    .setPositiveButton("Grant") { _, _ ->
+                        val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                        intent.data = Uri.parse("package:${requireContext().packageName}")
+                        startActivity(intent)
                     }
-                }
-
-                withContext(Dispatchers.Main) {
-                    switchToInternetMode()
-                    val fileUrl = "${LocalFileWebViewClient.LOCAL_SCHEME}open_$sanitizedName"
-                    webView.loadUrl(fileUrl)
-                    binding.urlInput.setText(sanitizedName)
-                    Toast.makeText(requireContext(), "Opened local file: $sanitizedName", Toast.LENGTH_SHORT).show()
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(requireContext(), "Failed to open local file: ${e.message}", Toast.LENGTH_LONG).show()
-                }
+                    .setNegativeButton("Cancel", null)
+                    .show()
+                return
             }
+        }
+
+        if (type == "ZIM") {
+            openZimLauncher.launch(arrayOf("*/*"))
+        } else {
+            openLocalFileLauncher.launch(arrayOf("text/html", "application/x-webarchive", "multipart/related", "message/rfc822"))
         }
     }
 
-    private fun sanitizeFileName(name: String): String {
-        return name.replace(Regex("[^a-zA-Z0-9.-]"), "_")
-    }
-
-    private fun openZimFromUri(uri: Uri) {
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val pfd = try {
-                    requireContext().contentResolver.openFileDescriptor(uri, "r")
-                } catch (e: Exception) {
-                    null
-                }
-
-                if (pfd != null) {
-                    try {
-                        val wrapper = KiwixZimWrapper(pfd)
-                        withContext(Dispatchers.Main) {
-                            currentZimWrapper?.close()
-                            currentZimWrapper = wrapper
-                            switchToZimMode()
-                            val mainEntry = wrapper.getMainPageEntry() ?: wrapper.getRandomArticle()
-                            if (mainEntry != null) {
-                                loadZimArticle(mainEntry)
-                            }
-                            Toast.makeText(requireContext(), "Opened ZIM file: ${wrapper.articleCount} entries", Toast.LENGTH_SHORT).show()
-                        }
-                        return@launch
-                    } catch (e: Exception) {
-                        pfd.close()
-                    }
-                }
-
-                val path = tryGetPathFromUri(uri)
-                if (path != null) {
-                    val file = File(path)
-                    if (file.exists() && file.canRead()) {
-                        try {
-                            val wrapper = KiwixZimWrapper(file)
-                            withContext(Dispatchers.Main) {
-                                currentZimWrapper?.close()
-                                currentZimWrapper = wrapper
-                                switchToZimMode()
-                                val mainEntry = wrapper.getMainPageEntry() ?: wrapper.getRandomArticle()
-                                if (mainEntry != null) {
-                                    loadZimArticle(mainEntry)
-                                }
-                                Toast.makeText(requireContext(), "Opened ZIM (via Path): ${wrapper.articleCount} entries", Toast.LENGTH_SHORT).show()
-                            }
-                            return@launch
-                        } catch (e: Exception) {}
-                    }
-                }
-                
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(requireContext(), "Preparing ZIM for local access...", Toast.LENGTH_SHORT).show()
-                }
-                
-                val cacheFile = copyUriToCache(uri)
-                if (cacheFile != null && cacheFile.exists() && cacheFile.canRead()) {
-                     try {
-                        val wrapper = KiwixZimWrapper(cacheFile)
-                        withContext(Dispatchers.Main) {
-                            currentZimWrapper?.close()
-                            currentZimWrapper = wrapper
-                            switchToZimMode()
-                            val mainEntry = wrapper.getMainPageEntry() ?: wrapper.getRandomArticle()
-                            if (mainEntry != null) {
-                                loadZimArticle(mainEntry)
-                            }
-                            Toast.makeText(requireContext(), "Opened ZIM (Cached): ${wrapper.articleCount} entries", Toast.LENGTH_SHORT).show()
-                        }
-                        return@launch
-                    } catch (e: Exception) {}
-                }
-
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(requireContext(), "Failed to open ZIM file (Permission denied or Native Error)", Toast.LENGTH_LONG).show()
-                }
-
-            } catch (e: Throwable) {
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(requireContext(), "Failed to open ZIM", Toast.LENGTH_LONG).show()
-                }
+    private fun handlePickedUri(uri: Uri, type: String) {
+        val path = tryGetPathFromUri(uri)
+        Log.d(TAG, "handlePickedUri: type=$type, uri=$uri, resolvedPath=$path")
+        if (path != null) {
+            val file = File(path)
+            if (type == "ZIM") {
+                openZimByFile(file)
+            } else {
+                openLocalFileByPath(file)
             }
+        } else {
+            Log.e(TAG, "Failed to resolve path for URI: $uri")
+            AlertDialog.Builder(requireContext())
+                .setTitle("Cannot Open Direct Path")
+                .setMessage("This file source does not provide a physical path. Large files cannot be opened this way without copying.\n\nSolution: Use the sidebar in the picker to select 'Internal Storage' or 'SD Card' directly.")
+                .setPositiveButton("Retry", { _, _ -> requestOpenFile(type) })
+                .setNegativeButton("Cancel", null)
+                .show()
         }
     }
 
-    private suspend fun copyUriToCache(uri: Uri): File? = withContext(Dispatchers.IO) {
-        val context = requireContext()
-        val fileName = getFileNameFromUri(uri)
-        val sanitizedName = sanitizeFileName(fileName)
-        val cacheFile = File(context.cacheDir, "local_$sanitizedName")
+    private fun openLocalFileByPath(file: File) {
+        if (!file.exists() || !file.canRead()) {
+            Log.e(TAG, "Local file not accessible: ${file.absolutePath}")
+            Toast.makeText(requireContext(), "Cannot read file: ${file.absolutePath}", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        switchToInternetMode()
         
-        try {
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                FileOutputStream(cacheFile).use { output ->
-                    input.copyTo(output)
+        var urlPath = file.absolutePath
+        if (urlPath.endsWith(".mhtml", ignoreCase = true)) {
+            urlPath = urlPath.substring(0, urlPath.length - 1)
+        }
+        
+        val fileUrl = "file://$urlPath"
+        Log.d(TAG, "Loading local file via file:// URL: $fileUrl")
+        webView.loadUrl(fileUrl)
+        
+        // Ensure search bar is empty
+        binding.urlInput.setText("")
+        
+        Toast.makeText(requireContext(), "Opened: ${file.name}", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun openZimByFile(file: File) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                if (!file.exists() || !file.canRead()) {
+                    Log.e(TAG, "ZIM file not accessible: ${file.absolutePath}")
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(requireContext(), "Cannot read file handle: ${file.absolutePath}", Toast.LENGTH_LONG).show()
+                    }
+                    return@launch
+                }
+
+                withContext(Dispatchers.Main) {
+                    binding.loadingProgress.visibility = View.VISIBLE
+                }
+
+                val wrapper = KiwixZimWrapper(file)
+                withContext(Dispatchers.Main) {
+                    finalizeZimOpening(wrapper)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error opening ZIM file", e)
+                withContext(Dispatchers.Main) {
+                    binding.loadingProgress.visibility = View.GONE
+                    Toast.makeText(requireContext(), "Error opening ZIM: ${e.message}", Toast.LENGTH_LONG).show()
                 }
             }
-            return@withContext cacheFile
-        } catch (e: Exception) {
-            cacheFile.delete()
-            return@withContext null
         }
     }
 
-    private fun getFileNameFromUri(uri: Uri): String {
-        var result: String? = null
-        if (uri.scheme == "content") {
-            val cursor = requireContext().contentResolver.query(uri, null, null, null, null)
-            try {
-                if (cursor != null && cursor.moveToFirst()) {
-                    val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                    if (index != -1) result = cursor.getString(index)
-                }
-            } catch (e: Exception) {
-            } finally {
-                cursor?.close()
-            }
+    private fun finalizeZimOpening(wrapper: KiwixZimWrapper) {
+        binding.loadingProgress.visibility = View.GONE
+        currentZimWrapper?.close()
+        currentZimWrapper = wrapper
+        switchToZimMode()
+        val mainEntry = wrapper.getMainPageEntry() ?: wrapper.getRandomArticle()
+        if (mainEntry != null) {
+            loadZimArticle(mainEntry)
         }
-        if (result == null) {
-            result = uri.path
-            val cut = result?.lastIndexOf('/') ?: -1
-            if (cut != -1) {
-                result = result?.substring(cut + 1)
-            }
-        }
-        return result ?: "temp.zim"
+        Toast.makeText(requireContext(), "Opened ZIM: ${wrapper.articleCount} entries", Toast.LENGTH_SHORT).show()
     }
 
     private fun tryGetPathFromUri(uri: Uri): String? {
+        val context = requireContext()
         if (uri.scheme == "file") return uri.path
         
-        if (uri.authority == "com.android.externalstorage.documents") {
-            val docId = uri.pathSegments.lastOrNull() ?: ""
-            val split = docId.split(":")
-            if (split.size >= 2) {
-                val type = split[0]
-                val relativePath = split[1]
-                if ("primary".equals(type, ignoreCase = true)) {
-                    return "/storage/emulated/0/$relativePath"
-                } else {
-                    return "/storage/$type/$relativePath"
+        try {
+            context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                val path = Os.readlink("/proc/self/fd/${pfd.fd}")
+                Log.d(TAG, "Os.readlink path: $path")
+                if (path != null && (path.startsWith("/storage") || path.startsWith("/data") || path.startsWith("/mnt"))) {
+                    return path
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed readlink resolution: ${e.message}")
+        }
+
+        if (DocumentsContract.isDocumentUri(context, uri)) {
+            when {
+                uri.authority == "com.android.externalstorage.documents" -> {
+                    val docId = DocumentsContract.getDocumentId(uri)
+                    val split = docId.split(":")
+                    val type = split[0]
+                    return if ("primary".equals(type, ignoreCase = true)) {
+                        Environment.getExternalStorageDirectory().toString() + "/" + split[1]
+                    } else {
+                        "/storage/$type/${split[1]}"
+                    }
+                }
+                uri.authority == "com.android.providers.downloads.documents" -> {
+                    val id = DocumentsContract.getDocumentId(uri)
+                    if (id.startsWith("raw:")) return id.substring(4)
                 }
             }
         }
         
-        try {
-            val projection = arrayOf("_data")
-            requireContext().contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    val index = cursor.getColumnIndex("_data")
-                    if (index != -1) return cursor.getString(index)
+        if ("content".equals(uri.scheme, ignoreCase = true)) {
+            try {
+                context.contentResolver.query(uri, arrayOf("_data"), null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val index = cursor.getColumnIndex("_data")
+                        if (index != -1) return cursor.getString(index)
+                    }
                 }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed _data query: ${e.message}")
             }
-        } catch (_: Exception) {}
+        }
         
         return null
     }
@@ -418,15 +411,16 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
         binding.urlInput.hint = "Enter URL or Search"
         updateMenuVisibility()
         
-        webView.webViewClient = LocalFileWebViewClient(requireContext().cacheDir) { url ->
+        webView.webViewClient = LocalFileWebViewClient { url ->
             if (url.startsWith("https://text-only.local/")) {
-                // Do not update the URL bar when in Text Only Mode
                 return@LocalFileWebViewClient
             }
             if (url.startsWith("data:text/html")) {
                 binding.urlInput.setText("")
-            } else if (url.startsWith(LocalFileWebViewClient.LOCAL_SCHEME)) {
-                binding.urlInput.setText(url.removePrefix(LocalFileWebViewClient.LOCAL_SCHEME))
+            } else if (url.startsWith("file:///")) {
+                // Ensure bar is empty for local files and restore default hint
+                binding.urlInput.setText("")
+                binding.urlInput.hint = "Enter URL or Search"
             } else {
                 binding.urlInput.setText(url)
             }
@@ -436,8 +430,8 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
     private fun showZimSearchDialog(initialQuery: String = "") {
         val wrapper = currentZimWrapper
         if (wrapper == null) {
-            Toast.makeText(requireContext(), "No ZIM file open. Please open a ZIM file first.", Toast.LENGTH_SHORT).show()
-            openZimLauncher.launch("*/*")
+            Toast.makeText(requireContext(), "No ZIM file open.", Toast.LENGTH_SHORT).show()
+            requestOpenFile("ZIM")
             return
         }
 
@@ -461,7 +455,7 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
             .setTitle(if (initialQuery.isBlank()) "ZIM Articles" else "Search Results for '$initialQuery'")
             .setItems(displayTitles) { _, which ->
                 val selected = searchResults[which]
-                loadZimArticle(selected)
+                selected?.let { loadZimArticle(it) }
             }
             .setNegativeButton("Cancel", null)
             .show()
@@ -488,10 +482,10 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
                 binding.urlInput.setText("")
             }
             R.id.nav_open_zim -> {
-                openZimLauncher.launch("*/*")
+                requestOpenFile("ZIM")
             }
             R.id.nav_open_local -> {
-                openLocalFileLauncher.launch(arrayOf("text/html", "application/x-webarchive", "multipart/related", "message/rfc822"))
+                requestOpenFile("HTML/MHTML")
             }
             R.id.nav_zim_search -> {
                 showZimSearchDialog()
@@ -499,8 +493,8 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
             R.id.nav_zim_random -> {
                 val wrapper = currentZimWrapper
                 if (wrapper == null) {
-                    Toast.makeText(requireContext(), "No ZIM file open. Please open a ZIM file first.", Toast.LENGTH_SHORT).show()
-                    openZimLauncher.launch("*/*")
+                    Toast.makeText(requireContext(), "No ZIM file open.", Toast.LENGTH_SHORT).show()
+                    requestOpenFile("ZIM")
                 } else {
                     val randomEntry = wrapper.getRandomArticle()
                     if (randomEntry != null) {
@@ -515,7 +509,7 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
                 val currentUrl = webView.url ?: ""
                 val currentInput = binding.urlInput.text.toString()
                 if (currentUrl.startsWith("https://text-only.local/") || currentInput.startsWith(getString(R.string.text_mode_prefix).substringBefore("%s"))) {
-                    // Already in text only mode, don't re-apply recursively
+                    // Already in text only mode
                 } else {
                     lifecycleScope.launch(Dispatchers.Main) {
                         val originalTitle = currentInput
@@ -636,14 +630,15 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
 
     private fun exportMhtmlToUri(uri: Uri) {
         val currentUrl = webView.url
-        if (currentUrl != null && currentUrl.startsWith(LocalFileWebViewClient.LOCAL_SCHEME)) {
-            val fileName = currentUrl.removePrefix(LocalFileWebViewClient.LOCAL_SCHEME)
-            val file = File(requireContext().cacheDir, fileName)
-            if (file.exists() && (fileName.endsWith(".mht", ignoreCase = true) || fileName.endsWith(".mhtml", ignoreCase = true))) {
+        if (currentUrl != null && currentUrl.startsWith("file:///")) {
+            val path = Uri.parse(currentUrl).path
+            val file = if (path != null) File(path) else null
+            if (file != null && (file.exists() || File(path + "l").exists())) {
                 lifecycleScope.launch(Dispatchers.IO) {
                     try {
+                        val realFile = if (file.exists()) file else File(path + "l")
                         requireContext().contentResolver.openOutputStream(uri)?.use { output ->
-                            file.inputStream().use { input -> input.copyTo(output) }
+                            realFile.inputStream().use { input -> input.copyTo(output) }
                         }
                         withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "MHTML exported successfully", Toast.LENGTH_SHORT).show() }
                     } catch (e: Exception) {
@@ -710,15 +705,15 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
             }
         }
 
-        if (currentUrl != null && currentUrl.startsWith(LocalFileWebViewClient.LOCAL_SCHEME)) {
-            val fileName = currentUrl.removePrefix(LocalFileWebViewClient.LOCAL_SCHEME)
-            
+        if (currentUrl != null && currentUrl.startsWith("file:///")) {
+            val path = Uri.parse(currentUrl).path ?: ""
             return@withContext withContext(Dispatchers.IO) {
                 try {
-                    val file = File(requireContext().cacheDir, fileName)
-                    if (file.exists() && file.canRead()) {
-                        val content = file.readText(Charsets.UTF_8)
-                        if (fileName.endsWith(".mht", ignoreCase = true) || fileName.endsWith(".mhtml", ignoreCase = true)) {
+                    val file = File(path)
+                    val realFile = if (file.exists()) file else if (File(path + "l").exists()) File(path + "l") else null
+                    if (realFile != null && realFile.canRead()) {
+                        val content = realFile.readText(Charsets.UTF_8)
+                        if (realFile.name.endsWith(".mht", ignoreCase = true) || realFile.name.endsWith(".mhtml", ignoreCase = true)) {
                             extractHtmlFromMhtml(content)
                         } else {
                             content
