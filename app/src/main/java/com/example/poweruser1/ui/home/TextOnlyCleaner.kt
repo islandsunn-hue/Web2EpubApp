@@ -47,7 +47,6 @@ object TextOnlyCleaner {
         if (rawHtml.isBlank()) return ""
 
         val doc = Jsoup.parse(rawHtml)
-        val docTitle = doc.title().trim()
 
         for (tag in REMOVE_TAGS) {
             doc.select(tag).remove()
@@ -85,10 +84,6 @@ object TextOnlyCleaner {
         }
 
         val body = doc.body()
-
-        if (docTitle.isNotBlank() && (body.selectFirst("h1") == null)) {
-            body.prependChild(doc.createElement("h1").text(docTitle))
-        }
 
         val outputSettings = doc.outputSettings()
         outputSettings.syntax(org.jsoup.nodes.Document.OutputSettings.Syntax.xml)

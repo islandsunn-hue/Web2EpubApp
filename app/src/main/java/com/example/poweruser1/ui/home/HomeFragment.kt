@@ -559,15 +559,13 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
                         val html = captureCurrentHtml()
                         if (html != null) {
                             val cleanedHtml = withContext(Dispatchers.IO) {
-                                val articleTitle = originalTitle.ifBlank { "Article" }
-                                val escapedTitle = escapeXml(articleTitle)
                                 val body = TextOnlyCleaner.clean(html)
                                 """
                                 <!DOCTYPE html>
                                 <html>
                                 <head>
                                     <meta charset="UTF-8">
-                                    <title>$escapedTitle</title>
+                                    <title>Text Mode</title>
                                     <style>
                                         body { font-family: sans-serif; line-height: 1.6; padding: 20px; max-width: 800px; margin: 0 auto; background: #fdfdfd; color: #333; }
                                         h1 { color: #111; border-bottom: 2px solid #eee; padding-bottom: 10px; }
@@ -577,7 +575,6 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
                                     </style>
                                 </head>
                                 <body>
-                                    <h1>$escapedTitle</h1>
                                     $body
                                 </body>
                                 </html>
@@ -608,7 +605,7 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
             R.id.nav_save_epub -> {
                 lifecycleScope.launch(Dispatchers.Main) {
                     val html = captureCurrentHtml()
-                    val title = if (html != null) TextOnlyCleaner.getTitle(html) else "article"
+                    val title = if (html != null) TextOnlyCleaner.getTitle(html) else ""
                     val cleanFileName = title.replace(Regex("[^a-zA-Z0-9.-]"), "_").take(30)
                     saveEpubLauncher.launch("$cleanFileName.epub")
                 }
