@@ -153,6 +153,7 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
                     val encodedQuery = URLEncoder.encode(input, "UTF-8")
                     "https://www.google.com/search?q=$encodedQuery"
                 }
+                webView.setBackgroundColor(android.graphics.Color.WHITE)
                 webView.loadUrl(url)
                 val imm = context?.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
                 imm?.hideSoftInputFromWindow(binding.urlInput.windowToken, 0)
@@ -252,6 +253,7 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
 
     private fun openLocalFileByUri(uri: Uri) {
         switchToInternetMode()
+        webView.setBackgroundColor(android.graphics.Color.WHITE)
         webView.loadUrl(uri.toString())
         
         // Restore standard look
@@ -276,6 +278,7 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
         
         val fileUrl = "file://$urlPath"
         Log.d(TAG, "Loading local file via file:// URL: $fileUrl")
+        webView.setBackgroundColor(android.graphics.Color.WHITE)
         webView.loadUrl(fileUrl)
         
         // Ensure search bar is empty and hint is restored to default
@@ -413,6 +416,7 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
             } catch (_: Exception) {}
         }
         val serverUrl = "https://zim.local/${targetEntry.path}"
+        webView.setBackgroundColor(android.graphics.Color.WHITE)
         webView.loadUrl(serverUrl)
         binding.urlInput.setText(targetEntry.path)
     }
@@ -516,6 +520,7 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
         when (item.itemId) {
             R.id.nav_home -> {
                 switchToInternetMode()
+                webView.setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 webView.loadData("<html><body style='background:transparent;'></body></html>", "text/html", "UTF-8")
                 binding.urlInput.setText("")
             }
@@ -555,13 +560,14 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
                         if (html != null) {
                             val cleanedHtml = withContext(Dispatchers.IO) {
                                 val articleTitle = originalTitle.ifBlank { "Article" }
+                                val escapedTitle = escapeXml(articleTitle)
                                 val body = TextOnlyCleaner.clean(html)
                                 """
                                 <!DOCTYPE html>
                                 <html>
                                 <head>
                                     <meta charset="UTF-8">
-                                    <title>$articleTitle</title>
+                                    <title>$escapedTitle</title>
                                     <style>
                                         body { font-family: sans-serif; line-height: 1.6; padding: 20px; max-width: 800px; margin: 0 auto; background: #fdfdfd; color: #333; }
                                         h1 { color: #111; border-bottom: 2px solid #eee; padding-bottom: 10px; }
@@ -571,7 +577,7 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
                                     </style>
                                 </head>
                                 <body>
-                                    <h1>$articleTitle</h1>
+                                    <h1>$escapedTitle</h1>
                                     $body
                                 </body>
                                 </html>
@@ -620,17 +626,19 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
     }
 
     private fun unescapeJsonString(json: String): String {
-        if (json == "null") return ""
+        if (json.isBlank() || json == "null") return ""
         return try {
             val tokener = org.json.JSONTokener(json)
             val value = tokener.nextValue()
             if (value is String) value else json
         } catch (e: Exception) {
-            if (json.startsWith("\"") && json.endsWith("\"")) {
-                json.substring(1, json.length - 1)
-            } else {
-                json
-            }
+            // Manual fallback for cases where JSONTokener fails on real devices
+            json.trim().removeSurrounding("\"")
+                .replace("\\\"", "\"")
+                .replace("\\n", "\n")
+                .replace("\\r", "\r")
+                .replace("\\t", "\t")
+                .replace("\\\\", "\\")
         }
     }
 
@@ -725,79 +733,161 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
     }
 
     private suspend fun captureCurrentHtml(): String? = withContext(Dispatchers.Main) {
-        val currentUrl = webView.url
+        val currentUrl = webView.url ?: return@withContext null
+        Log.d(TAG, "captureCurrentHtml: url=$currentUrl")
 
-        if (currentUrl != null && (currentUrl.startsWith("https://zim.local/") || currentUrl.startsWith("http://zim.local/"))) {
+        // 1. ZIM mode
+        if (currentUrl.contains("zim.local")) {
             val path = currentUrl.replace("https://zim.local/", "").replace("http://zim.local/", "")
-            val wrapper = currentZimWrapper
-            if (wrapper != null) {
-                return@withContext withContext(Dispatchers.IO) {
-                    try {
-                        val entry = wrapper.getEntryForPath(path)
-                        val item = entry?.getItem(true)
-                        item?.data?.data?.let { String(it, Charsets.UTF_8) }
-                    } catch (e: Exception) {
-                        null
-                    }
-                }
-            }
-        }
-
-        if (currentUrl != null && currentUrl.startsWith("file:///")) {
-            val path = Uri.parse(currentUrl).path ?: ""
             return@withContext withContext(Dispatchers.IO) {
                 try {
-                    val file = File(path)
-                    val realFile = if (file.exists()) file else if (File(path + "l").exists()) File(path + "l") else null
-                    if (realFile != null && realFile.canRead()) {
-                        val content = realFile.readText(Charsets.UTF_8)
-                        if (realFile.name.endsWith(".mht", ignoreCase = true) || realFile.name.endsWith(".mhtml", ignoreCase = true)) {
-                            extractHtmlFromMhtml(content)
-                        } else {
-                            content
-                        }
-                    } else {
-                        null
-                    }
+                    currentZimWrapper?.getEntryForPath(path)?.getItem(true)?.data?.data?.let { String(it, Charsets.UTF_8) }
                 } catch (e: Exception) {
+                    Log.e(TAG, "ZIM capture failed", e)
                     null
                 }
             }
         }
 
-        return@withContext suspendCancellableCoroutine { continuation ->
-            webView.evaluateJavascript("(function() { return document.documentElement.outerHTML; })();") { rawHtml ->
+        // 2. Try JS first (Fastest and usually accurate for rendered DOM)
+        val jsHtml = captureViaJs()
+        if (jsHtml != null && jsHtml.length > 500) {
+            Log.d(TAG, "Captured via JS, length=${jsHtml.length}")
+            return@withContext jsHtml
+        }
+
+        // 3. Try saveWebArchive (Robust fallback for tricky/MHTML-based pages)
+        val mhtml = captureViaWebArchive()
+        if (mhtml != null) {
+            val extracted = extractHtmlFromMhtml(mhtml)
+            if (extracted.length > 500) {
+                Log.d(TAG, "Captured via saveWebArchive, length=${extracted.length}")
+                return@withContext extracted
+            }
+        }
+
+        // 4. Final fallback: Direct URI reading (if file:/// or content://)
+        if (currentUrl.startsWith("file:///") || currentUrl.startsWith("content://")) {
+            val raw = readUriContent(currentUrl)
+            if (raw != null) {
+                Log.d(TAG, "Captured via direct URI read")
+                return@withContext if (isMhtml(raw)) extractHtmlFromMhtml(raw) else raw
+            }
+        }
+
+        Log.e(TAG, "All capture methods failed for $currentUrl")
+        return@withContext jsHtml ?: mhtml?.let { extractHtmlFromMhtml(it) }
+    }
+
+    private suspend fun captureViaJs(): String? = try {
+        suspendCancellableCoroutine { continuation ->
+            webView.evaluateJavascript("document.documentElement.outerHTML") { rawHtml ->
                 val html = unescapeJsonString(rawHtml ?: "null")
-                if (html.isNotBlank()) {
-                    continuation.resume(html)
-                } else {
-                    continuation.resume(null)
+                if (continuation.isActive) {
+                    continuation.resume(if (html.isNotBlank() && html != "null") html else null)
+                }
+            }
+        }
+    } catch (e: Exception) {
+        null
+    }
+
+    private suspend fun captureViaWebArchive(): String? = suspendCancellableCoroutine { continuation ->
+        val tempFile = File(requireContext().cacheDir, "cap_${System.currentTimeMillis()}.mhtml")
+        webView.saveWebArchive(tempFile.absolutePath, false) { path ->
+            if (path == null) {
+                if (continuation.isActive) continuation.resume(null)
+            } else {
+                lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        val content = tempFile.readText(Charsets.UTF_8)
+                        tempFile.delete()
+                        if (continuation.isActive) continuation.resume(content)
+                    } catch (e: Exception) {
+                        if (continuation.isActive) continuation.resume(null)
+                    }
                 }
             }
         }
     }
 
-    private fun extractHtmlFromMhtml(mhtml: String): String {
-        val parts = mhtml.split("Content-Type: text/html", limit = 2)
-        if (parts.size < 2) return mhtml
-        
-        val afterHeader = parts[1].substringAfter("\r\n\r\n", parts[1].substringAfter("\n\n"))
-        val boundaryMatch = Regex("\r\n--").find(afterHeader) ?: Regex("\n--").find(afterHeader)
-        val rawHtmlPart = if (boundaryMatch != null) {
-            afterHeader.substring(0, boundaryMatch.range.first)
-        } else {
-            afterHeader
-        }
-
-        return rawHtmlPart.replace("=\r\n", "")
-            .replace("=\n", "")
-            .replace(Regex("=([0-9A-F]{2})")) { match ->
-                try {
-                    match.groupValues[1].toInt(16).toChar().toString()
-                } catch (_: Exception) {
-                    match.value
+    private suspend fun readUriContent(url: String): String? = withContext(Dispatchers.IO) {
+        try {
+            val uri = Uri.parse(url)
+            if (url.startsWith("file:///")) {
+                val file = File(uri.path ?: "")
+                if (file.exists() && file.canRead()) file.readText() else null
+            } else {
+                requireContext().contentResolver.openInputStream(uri)?.use { input ->
+                    input.bufferedReader().readText()
                 }
             }
+        } catch (e: Exception) {
+            Log.e(TAG, "readUriContent failed", e)
+            null
+        }
+    }
+
+    private fun isMhtml(content: String): Boolean {
+        val head = content.take(1000).lowercase()
+        return head.contains("multipart/related") || head.contains("content-type: message/rfc822")
+    }
+
+    private fun extractHtmlFromMhtml(mhtml: String): String {
+        // Find boundary
+        val boundaryMatch = Regex("boundary=\"?([^\";\\s]+)\"?").find(mhtml)
+        val boundary = boundaryMatch?.groupValues?.get(1)
+
+        // Split by boundary
+        val parts = if (boundary != null) {
+            mhtml.split("--$boundary")
+        } else {
+            mhtml.split(Regex("\r?\n--"))
+        }
+
+        // Find the best text/html part (usually largest)
+        val htmlPart = parts.filter { it.contains("Content-Type: text/html", ignoreCase = true) }
+            .maxByOrNull { it.length } ?: return mhtml
+
+        val splitIndex = htmlPart.indexOf("\n\n").takeIf { it != -1 } ?: htmlPart.indexOf("\r\n\r\n")
+        if (splitIndex == -1) return htmlPart
+
+        val headers = htmlPart.substring(0, splitIndex)
+        val body = htmlPart.substring(splitIndex).trim()
+
+        return if (headers.contains("base64", ignoreCase = true)) {
+            try {
+                String(android.util.Base64.decode(body.replace(Regex("\\s"), ""), android.util.Base64.DEFAULT), Charsets.UTF_8)
+            } catch (_: Exception) {
+                body
+            }
+        } else if (headers.contains("quoted-printable", ignoreCase = true)) {
+            decodeQuotedPrintable(body)
+        } else {
+            body
+        }
+    }
+
+    private fun decodeQuotedPrintable(input: String): String {
+        val out = java.io.ByteArrayOutputStream()
+        var i = 0
+        val cleanInput = input.replace("=\r\n", "").replace("=\n", "")
+        while (i < cleanInput.length) {
+            val c = cleanInput[i]
+            if (c == '=') {
+                if (i + 2 < cleanInput.length) {
+                    try {
+                        val hex = cleanInput.substring(i + 1, i + 3)
+                        out.write(hex.toInt(16))
+                        i += 3
+                        continue
+                    } catch (_: Exception) {}
+                }
+            }
+            out.write(c.code)
+            i++
+        }
+        return out.toString("UTF-8")
     }
 
     private suspend fun generateEpub(uri: Uri, html: String) = withContext(Dispatchers.IO) {

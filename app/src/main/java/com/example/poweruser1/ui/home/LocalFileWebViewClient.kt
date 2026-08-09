@@ -8,7 +8,6 @@ import android.webkit.WebViewClient
 import java.io.File
 import java.io.FileInputStream
 import java.net.URLConnection
-import java.net.URLDecoder
 
 class LocalFileWebViewClient(
     private val onUrlLoaded: (String) -> Unit
@@ -37,13 +36,14 @@ class LocalFileWebViewClient(
             Log.d(TAG, "Intercepting request: $url")
             
             val path = try {
-                if (url.startsWith("file:/")) {
+                val rawPath = if (url.startsWith("file:/")) {
                     request.url.path
                 } else {
-                    val rawPath = url.removePrefix(LOCAL_SCHEME).substringBefore('?').substringBefore('#')
-                    val decoded = URLDecoder.decode(rawPath, "UTF-8")
-                    if (!decoded.startsWith("/")) "/$decoded" else decoded
+                    url.removePrefix(LOCAL_SCHEME).substringBefore('?').substringBefore('#')
                 }
+                // Use Uri.decode for file paths instead of URLDecoder.decode to handle + literally
+                val decoded = android.net.Uri.decode(rawPath)
+                if (!decoded.startsWith("/")) "/$decoded" else decoded
             } catch (e: Exception) {
                 Log.e(TAG, "Path resolution error", e)
                 null
