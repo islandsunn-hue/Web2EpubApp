@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
 import androidx.navigation.findNavController
 import com.example.poweruser1.databinding.ActivityMainBinding
+import java.io.File
 
 class MainActivity : AppCompatActivity() {
 
@@ -12,6 +13,13 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         supportActionBar?.hide()
+
+        try {
+            val webViewDir = File(applicationContext.dataDir, "cache/WebView")
+            if (webViewDir.exists() && !webViewDir.isDirectory) {
+                webViewDir.delete()
+            }
+        } catch (_: Exception) {}
 
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)

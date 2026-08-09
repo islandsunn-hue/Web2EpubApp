@@ -1,26 +1,33 @@
 <?xml version="1.0" encoding="utf-8"?>
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
-    <group>
-        <item
-            android:id="@+id/nav_home"
-            android:title="Home" />
-        <item
-            android:id="@+id/nav_toggle_editor"
-            android:title="Show/Hide Editor" />
-        <item
-            android:id="@+id/nav_text_only_mode"
-            android:title="Text Only Mode" />
-        <item
-            android:id="@+id/nav_save_epub"
-            android:title="Save as ePub" />
-        <item
-            android:id="@+id/nav_save_html"
-            android:title="Save as HTML" />
-        <item
-            android:id="@+id/nav_save_mhtml"
-            android:title="Save as MHTML" />
-        <item
-            android:id="@+id/nav_save_pdf"
-            android:title="Save as PDF" />
-    </group>
+    <item
+        android:id="@+id/nav_home"
+        android:title="Home" />
+    <item
+        android:id="@+id/nav_open_zim"
+        android:title="Open Local ZIM File" />
+    <item
+        android:id="@+id/nav_open_local"
+        android:title="Open Local HTML/MHTML" />
+    <item
+        android:id="@+id/nav_zim_search"
+        android:title="ZIM Index" />
+    <item
+        android:id="@+id/nav_zim_random"
+        android:title="Random ZIM Article" />
+    <item
+        android:id="@+id/nav_text_only_mode"
+        android:title="Text Only Mode" />
+    <item
+        android:id="@+id/nav_save_epub"
+        android:title="Save as ePub" />
+    <item
+        android:id="@+id/nav_save_html"
+        android:title="Save as HTML" />
+    <item
+        android:id="@+id/nav_save_mhtml"
+        android:title="Save as MHTML" />
+    <item
+        android:id="@+id/nav_save_pdf"
+        android:title="Save as PDF" />
 </menu>

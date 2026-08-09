@@ -1,7 +1,5 @@
 <resources>
-    <string name="app_name">PowerUser1</string>
+    <string name="app_name">Web2Epub</string>
     <string name="title_home">Home</string>
-    <string name="title_dashboard">Dashboard</string>
-    <string name="title_notifications">Notifications</string>
-    <string name="title_browser">Browser</string>
+    <string name="text_mode_prefix">Text Mode: %s</string>
 </resources>

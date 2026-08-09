@@ -27,14 +27,15 @@ android {
         }
     }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions {
-        jvmTarget = "11"
+        jvmTarget = "17"
     }
     buildFeatures {
         viewBinding = true
+        prefab = true
     }
     testOptions {
         unitTests {
@@ -54,6 +55,7 @@ dependencies {
     implementation(libs.androidx.navigation.fragment.ktx)
     implementation(libs.androidx.navigation.ui.ktx)
     implementation(libs.jsoup)
+    implementation("org.kiwix:libkiwix:2.6.0")
     debugImplementation("androidx.fragment:fragment-testing:1.6.2")
     testImplementation(libs.junit)
     testImplementation("org.robolectric:robolectric:4.10.3")
