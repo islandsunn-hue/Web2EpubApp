@@ -1,4 +1,4 @@
-package com.example.poweruser1
+package com.web2epub1.poweruser1
 
 import android.app.Application
 import android.os.Build

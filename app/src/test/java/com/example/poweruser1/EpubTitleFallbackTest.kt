@@ -1,4 +1,4 @@
-package com.example.poweruser1
+package com.web2epub1.poweruser1
 
 import org.jsoup.Jsoup
 import org.junit.Assert.assertEquals
@@ -39,15 +39,15 @@ class EpubTitleFallbackTest {
     @Test
     fun testTextOnlyCleanerGetTitle() {
         val htmlWithH1 = "<html><body><h1>Real Header</h1><p>Content</p></body></html>"
-        assertEquals("Real Header", com.example.poweruser1.ui.home.TextOnlyCleaner.getTitle(htmlWithH1))
+        assertEquals("Real Header", com.web2epub1.poweruser1.ui.home.TextOnlyCleaner.getTitle(htmlWithH1))
 
         val htmlNoHeader = "<html><body><p>This is a long content that should be truncated to twelve characters.</p></body></html>"
-        assertEquals("This is a lo", com.example.poweruser1.ui.home.TextOnlyCleaner.getTitle(htmlNoHeader))
+        assertEquals("This is a lo", com.web2epub1.poweruser1.ui.home.TextOnlyCleaner.getTitle(htmlNoHeader))
 
         val htmlShortBody = "<html><body><p>Short</p></body></html>"
-        assertEquals("Short", com.example.poweruser1.ui.home.TextOnlyCleaner.getTitle(htmlShortBody))
+        assertEquals("Short", com.web2epub1.poweruser1.ui.home.TextOnlyCleaner.getTitle(htmlShortBody))
 
         val htmlEmpty = ""
-        assertEquals("Untitled Article", com.example.poweruser1.ui.home.TextOnlyCleaner.getTitle(htmlEmpty))
+        assertEquals("Untitled Article", com.web2epub1.poweruser1.ui.home.TextOnlyCleaner.getTitle(htmlEmpty))
     }
 }

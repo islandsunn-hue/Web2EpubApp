@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.poweruser1"
+    namespace = "com.web2epub1.poweruser1"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.example.poweruser1"
+        applicationId = "com.web2epub1.poweruser1"
         minSdk = 24
         targetSdk = 35
         versionCode = 1

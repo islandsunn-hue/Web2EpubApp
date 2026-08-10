@@ -1,4 +1,4 @@
-package com.example.poweruser1.ui.home
+package com.web2epub1.poweruser1.ui.home
 
 import android.content.Context
 import android.net.Uri
@@ -21,10 +21,10 @@ import androidx.appcompat.app.AlertDialog
 import androidx.core.view.GravityCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
-import com.example.poweruser1.R
-import com.example.poweruser1.databinding.FragmentHomeBinding
-import com.example.poweruser1.zim.KiwixZimWrapper
-import com.example.poweruser1.zim.ZimWebViewClient
+import com.web2epub1.poweruser1.R
+import com.web2epub1.poweruser1.databinding.FragmentHomeBinding
+import com.web2epub1.poweruser1.zim.KiwixZimWrapper
+import com.web2epub1.poweruser1.zim.ZimWebViewClient
 import com.google.android.material.navigation.NavigationView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch

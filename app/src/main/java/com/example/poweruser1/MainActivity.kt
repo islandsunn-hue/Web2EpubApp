@@ -1,9 +1,9 @@
-package com.example.poweruser1
+package com.web2epub1.poweruser1
 
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
 import androidx.navigation.findNavController
-import com.example.poweruser1.databinding.ActivityMainBinding
+import com.web2epub1.poweruser1.databinding.ActivityMainBinding
 import java.io.File
 
 class MainActivity : AppCompatActivity() {

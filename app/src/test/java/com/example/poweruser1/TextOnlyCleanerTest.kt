@@ -1,6 +1,6 @@
-package com.example.poweruser1
+package com.web2epub1.poweruser1
 
-import com.example.poweruser1.ui.home.TextOnlyCleaner
+import com.web2epub1.poweruser1.ui.home.TextOnlyCleaner
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test

@@ -1,4 +1,4 @@
-package com.example.poweruser1.ui.home
+package com.web2epub1.poweruser1.ui.home
 
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element

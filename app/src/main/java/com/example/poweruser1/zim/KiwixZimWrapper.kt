@@ -1,4 +1,4 @@
-package com.example.poweruser1.zim
+package com.web2epub1.poweruser1.zim
 
 import android.os.ParcelFileDescriptor
 import org.kiwix.libzim.Archive
