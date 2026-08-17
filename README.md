@@ -3,6 +3,11 @@
 
 Web2Epub is a versatile Android application designed to bridge the gap between live web content and offline accessibility. It allows users to browse the web, open various archive formats, and convert content into high-quality offline documents.
 
+## 📥 Download
+
+You can download the latest APK here:
+[Download APK](https://github.com/islandsunn-hue/Web2EpubApp/blob/master/app/release/app-release.apk)
+
 ## 🚀 Features
 
 ### 🌐 Web Page Conversion
