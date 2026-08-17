@@ -1,5 +1,6 @@
 # Web2Epub
 *This readme was written by Gemini and human reviewed.*
+
 Web2Epub is a versatile Android application designed to bridge the gap between live web content and offline accessibility. It allows users to browse the web, open various archive formats, and convert content into high-quality offline documents.
 
 ## 🚀 Features
