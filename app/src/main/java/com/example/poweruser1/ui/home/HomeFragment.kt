@@ -640,10 +640,47 @@ class HomeFragment : Fragment(), NavigationView.OnNavigationItemSelectedListener
     }
 
     private fun exportPdf() {
-        val printManager = requireContext().getSystemService(Context.PRINT_SERVICE) as PrintManager
-        val jobName = "${getString(R.string.app_name)} Document"
-        val printAdapter = webView.createPrintDocumentAdapter(jobName)
-        printManager.print(jobName, printAdapter, PrintAttributes.Builder().build())
+        val printCss = """
+            (function() {
+                var style = document.getElementById('print-fix-style');
+                if (!style) {
+                    style = document.createElement('style');
+                    style.id = 'print-fix-style';
+                    style.type = 'text/css';
+                    style.innerHTML = `
+                        @media print {
+                            html, body, div, article, section, main, #mw-content-text {
+                                height: auto !important;
+                                overflow: visible !important;
+                                position: static !important;
+                            }
+                            /* Force visibility of all elements to prevent hidden overflow parents */
+                            * {
+                                overflow: visible !important;
+                            }
+                            /* Hide navigation elements that might take up space */
+                            nav, footer, header, .header, .footer, .nav, .sidebar {
+                                display: none !important;
+                            }
+                        }
+                    `;
+                    document.head.appendChild(style);
+                }
+            })()
+        """.trimIndent()
+
+        webView.evaluateJavascript(printCss) {
+            // Wait for a few frames to allow the WebView to recalculate its internal scroll height
+            // with the newly injected print CSS.
+            webView.postDelayed({
+                if (isAdded && activity != null) {
+                    val printManager = requireContext().getSystemService(Context.PRINT_SERVICE) as PrintManager
+                    val jobName = "${getString(R.string.app_name)} Document"
+                    val printAdapter = webView.createPrintDocumentAdapter(jobName)
+                    printManager.print(jobName, printAdapter, PrintAttributes.Builder().build())
+                }
+            }, 500)
+        }
     }
 
     private fun unescapeJsonString(json: String): String {
